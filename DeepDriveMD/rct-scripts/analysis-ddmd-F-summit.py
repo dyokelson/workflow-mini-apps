@@ -79,7 +79,7 @@ class MVP(object):
 
     # This is for simulation, return a stage which has many sim task
     def run_sim(self, phase_idx):
-
+        phase_cores = {0:1, 1:3, 2:7, 3:1, 4:3, 5:7}
         s = entk.Stage()
         for i in range(self.args.num_sim):
             t = entk.Task()
@@ -110,16 +110,15 @@ class MVP(object):
                            '--read_size={}'.format(self.io_dict["phase{}".format(phase_idx)]["sim"]["read"])]
             t.post_exec = []
             t.cpu_reqs = {
-                 'cpu_processes'    : 1,
+                 'cpu_processes'    : 1, # number of ranks per task - don't change this no MPI support
                  'cpu_process_type' : None,
-                 'cpu_threads'      : 7,
+                 'cpu_threads'      : phase_cores[phase_idx], # number of ranks so that all cores are used change from 1 to T (where T uses all the resources)
                  'cpu_thread_type'  : rp.OpenMP
                  }
             t.gpu_reqs = {
                  'gpu_processes'     : 1,
                  'gpu_process_type'  : None
                  }
-
             s.add_tasks(t)
 
         return s
@@ -128,6 +127,7 @@ class MVP(object):
     # This is for training, return a stage which has a single training task
     def run_train(self, phase_idx):
 
+        phase_cores = {0:7, 1:7, 2:7, 3:3, 4:3, 5:3}
         s = entk.Stage()
         t = entk.Task()
         t.pre_exec = [
@@ -150,11 +150,13 @@ class MVP(object):
         else:
             t.executable = "python"
         t.arguments = ['{}/Executables/training.py'.format(self.args.work_dir),
-                       '--num_epochs={}'.format(self.args.num_epochs_train),
-                       '--device=gpu',
+                       '--split_train={}'.format(0),
+                       '--num_epochs={}'.format(self.args.num_epochs_train), # can use this to make training take longer (more epochs)
+                       '--device=gpu', # can set this to be cpu if we want but not recommended
                        '--phase={}'.format(phase_idx),
                        '--data_root_dir={}'.format(self.args.data_root_dir),
                        '--model_dir={}'.format(self.args.model_dir),
+                       # number of samples changes how much simulation data is used
                        '--num_sample={}'.format(self.args.num_sample * (1 if phase_idx == 0 else 2)),
                        '--num_mult={}'.format(self.args.num_mult_train),
                        '--dense_dim_in={}'.format(self.args.dense_dim_in),
@@ -167,15 +169,16 @@ class MVP(object):
         t.cpu_reqs = {
             'cpu_processes'     : 1,
             'cpu_process_type'  : None,
-            'cpu_threads'       : 7,
+            'cpu_threads'       : phase_cores[phase_idx], # could tune this but most work is done on GPU, maybe reduce to show that we could free up cores for other tasks
             'cpu_thread_type'   : rp.OpenMP
                 }
         t.gpu_reqs = {
-            'gpu_processes'     : 1,
+            'gpu_processes'     : 1, # don't increase gpu usage, multi-gpu not supported
             'gpu_process_type'  : None
                 }
         s.add_tasks(t)
-
+        # more training tasks is possible but they'd be identical configuration-wise wouldn't speed up workflow, but we could look at when system is fully utilized etc
+        # simulation or training tend to take the longest
         return s
 
     # This is for model selection, return a stage which has a single training task
@@ -211,7 +214,7 @@ class MVP(object):
         t.cpu_reqs = {
             'cpu_processes'     : 1,
             'cpu_process_type'  : None,
-            'cpu_threads'       : 7,
+            'cpu_threads'       : 7, # can tune this but won't see much effect because it's shortest
             'cpu_thread_type'   : rp.OpenMP
                 }
         s.add_tasks(t)
@@ -260,7 +263,7 @@ class MVP(object):
         t.cpu_reqs = {
             'cpu_processes'     : 1,
             'cpu_process_type'  : None,
-            'cpu_threads'       : self.args.num_sim,
+            'cpu_threads'       : self.args.num_sim, # don't change this, fixed based on 
             'cpu_thread_type'   : rp.OpenMP
                 }
         t.gpu_reqs = {
@@ -271,9 +274,105 @@ class MVP(object):
 
         return s
 
+    def add_soma_service(self):
+        t = entk.Task()
+        t.pre_exec = [
+                    'module reset',
+                    "module load DefApps-2023",
+                    "module load cuda/11.7.1",
+                    "module load gcc/12.1.0",
+                    "module load cmake/3.23.2",
+                    "module load spectrum-mpi/10.4.0.6-20230210",
+                    'module load libfabric/1.14.1-sysrdma',
+                    'module list',
+                    'export SOMA_INSTALL_DIR=/ccs/home/dewiy/soma-collector/install',
+                    'export SOMA_NUM_SERVER_INSTANCES=2',
+                    'export SOMA_NUM_SERVERS_PER_INSTANCE=2',
+                    'export SOMA_SERVER_ADDR_FILE=$RP_PILOT_SANDBOX/server.add',
+                    'export SOMA_NODE_ADDR_FILE=$RP_PILOT_SANDBOX/node.add',
+                    ]
+
+        t.executable = '/ccs/home/dewiy/soma-collector/build/examples/example-server'
+        t.arguments = ['-a', 'ofi+verbs://']
+        t.cpu_reqs = {
+                'cpu_processes' : 4,
+                'cpu_process_type' : None
+                }
+        t.tags = {'colocate': 'service'}
+
+        # add service task to app manager
+        self.am.services = t
+
+    def generate_rp_monitor(self):
+        t = entk.Task()
+        t.pre_exec = [
+                    'module reset',
+                    "module load DefApps-2023",
+                    "module load cuda/11.7.1",
+                    "module load gcc/12.1.0",
+                    "module load cmake/3.23.2",
+                    "module load spectrum-mpi/10.4.0.6-20230210",
+                    'module load libfabric/1.14.1-sysrdma',
+                    'export SOMA_INSTALL_DIR=/ccs/home/dewiy/soma-collector/install',
+                    'export SOMA_NUM_SERVER_INSTANCES=2',
+                    'export SOMA_NUM_SERVERS_PER_INSTANCE=2',
+                    'export SOMA_MON_SERVER_INSTANCE_ID=0',
+                    'export SOMA_SERVER_ADDR_FILE=$RP_PILOT_SANDBOX/server.add',
+                    'export SOMA_NODE_ADDR_FILE=$RP_PILOT_SANDBOX/node.add',
+                    'export RP_SOMA_MONITORING_FREQUENCY=1',
+                    'export RP_WRITE_FREQUENCY=4',
+                    'export RP_SOMA_SLEEP_TIME=1000000',
+                    'export RP_SOMA_RUN_TIME=85',
+                    'export RP_FILE_PATH=$RP_PILOT_SANDBOX'
+                ]
+        t.executable = '/ccs/home/dewiy/soma-collector/build/examples/rp-monitor'
+        t.tags = {'colocate' : 'service'}
+
+        # return the task
+        return t
+    
+    def generate_hw_monitors(self):
+        t_list = []
+        for idx in range(self.args.num_nodes-1):
+            t = entk.Task()
+            t.pre_exec = [
+                        'module reset',
+                        "module load DefApps-2023",
+                        "module load cuda/11.7.1",
+                        "module load gcc/12.1.0",
+                        "module load cmake/3.23.2",
+                        "module load spectrum-mpi/10.4.0.6-20230210",
+                        'module load libfabric/1.14.1-sysrdma',
+                        'export PROC_SOMA_IDX='+str(idx+1),
+                        'export SOMA_INSTALL_DIR=/ccs/home/dewiy/soma-collector/install',
+                        'export SOMA_NUM_SERVER_INSTANCES=2',
+                        'export SOMA_NUM_SERVERS_PER_INSTANCE=2',
+                        'export SOMA_MON_SERVER_INSTANCE_ID=1',
+                        'export SOMA_SERVER_ADDR_FILE=$RP_PILOT_SANDBOX/server.add',
+                        'export SOMA_NODE_ADDR_FILE=$RP_PILOT_SANDBOX/node.add',
+                        'export PROC_SOMA_MONITORING_FREQUENCY=1',
+                        'export PROC_WRITE_FREQUENCY=72',
+                        'export PROC_SOMA_SLEEP_TIME=60000',
+                        'export PROC_SOMA_RUN_TIME=80',
+                        ]
+            t.executable = '/ccs/home/dewiy/soma-collector/build/examples/proc-monitor'
+            t.tags = {'colocate' : str(idx), 'exclusive': True}
+            t_list.append(t)
+
+        # return the list of tasks
+        return t_list
+
+
     def generate_pipeline(self):
 
         p = entk.Pipeline()
+        # wait here for monitors to be launched
+        t = entk.Task()
+        t.executable = 'sleep'
+        t.arguments = ['30']
+        s = entk.Stage()
+        s.add_tasks(t)
+        p.add_stages(s)
         for phase in range(int(self.args.num_phases)):
             s1 = self.run_sim(phase)
             p.add_stages(s1)
@@ -285,9 +384,28 @@ class MVP(object):
             p.add_stages(s4)
         return p
 
+    def generate_monitor_pipeline(self):
+        m = entk.Pipeline()
+        # wait here for monitors to be launched
+        t = entk.Task()
+        t.executable = 'sleep'
+        t.arguments = ['10']
+        s = entk.Stage()
+        s.add_tasks(t)
+        m.add_stages(s)
+        s2 = entk.Stage()
+        s2.add_tasks(self.generate_rp_monitor())
+        s2.add_tasks(self.generate_hw_monitors())
+        m.add_stages(s2)
+        return m
+
     def run_workflow(self):
+        # services are added
+        self.add_soma_service()
+        # monitor pipeline
+        m = self.generate_monitor_pipeline()
         p = self.generate_pipeline()
-        self.am.workflow = [p]
+        self.am.workflow = [m,p]
         self.am.run()
 
 
@@ -299,7 +417,7 @@ if __name__ == "__main__":
 #        'queue'   : 'debug',
         'queue'   : mvp.args.queue,
 #        'queue'   : 'default',
-        'walltime': 45, #MIN
+        'walltime': 120, #MIN
         'cpus'    : 42 * mvp.args.num_nodes,
         'gpus'    : 6 * mvp.args.num_nodes,
         'project' : mvp.args.project_id

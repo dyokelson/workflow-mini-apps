@@ -7,12 +7,17 @@ import kernel as wf
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Exalearn_miniapp_training')
+    parser.add_argument('--split_train', type=int, default=0, help='split training into multiple tasks')
     parser.add_argument('--num_epochs', type=int, default=30, metavar='N',
                         help='number of epochs to train (default: 30)')
     parser.add_argument('--device', default='gpu',
                         help='Wheter this is running on cpu or gpu')
     parser.add_argument('--phase', type=int, default=0,
                         help='the current phase of workflow, phase0 will not read model')
+    parser.add_argument('--pipeline_idx', type=int, default=0,
+                         help='index of pipeline this task is in')
+    parser.add_argument('--task_idx', type=int, default=0,
+                        help='the task index of this simulation task in this stage')
     parser.add_argument('--data_root_dir', default='./',
                         help='the root dir of gsas output data')
     parser.add_argument('--model_dir', default='./',
@@ -59,7 +64,7 @@ def main():
 #        print("gpu id is {}".format(cupy.cuda.runtime.getDeviceProperties(0)['uuid']))
 
 
-    wf.readNonMPI(args.read_size, root_path, args.instance_index)
+    wf.readNonMPI(args.read_size, root_path, str(args.task_idx)+str(args.pipeline_idx))
     wf.sleep(args.preprocess_time)
     wf.generateRandomNumber(device, args.num_sample * args.dense_dim_in)
     wf.generateRandomNumber(device, args.dense_dim_in * args.dense_dim_out)
@@ -77,10 +82,15 @@ def main():
             wf.axpy(device, args.dense_dim_in * args.dense_dim_out)
         print("epoch is {}, mult takes {}".format(epoch, time.time() - tt))
         tt = time.time()
+    
+        if args.split_train != 0:
+            for j in range(25):
+                wf.allReduce("cpu", args.num_sample * args.dense_dim_in)
+            print("epoch is {}, allreduce takes {}".format(epoch, time.time() - tt))
 
     if device == 'gpu':
         wf.dataCopyD2H(args.dense_dim_in * args.dense_dim_out)
-    wf.writeNonMPI(args.write_size, root_path, args.instance_index)
+    wf.writeNonMPI(args.write_size, root_path, str(args.task_idx)+str(args.pipeline_idx))
 
     end_time = time.time()
     print("Total running time is {}) seconds".format(end_time - start_time))

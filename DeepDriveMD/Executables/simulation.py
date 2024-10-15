@@ -9,6 +9,10 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Exalearn_miniapp_simulation')
     parser.add_argument('--phase', type=int, default=0,
                         help='the current phase of workflow, in miniapp all phases do the same thing except rng')
+    parser.add_argument('--pipeline_idx', type=int, default=0,
+                         help='index of pipeline this task is in')
+    parser.add_argument('--task_idx', type=int, default=0,
+                        help='the task index of this simulation task in this stage')
     parser.add_argument('--mat_size', type=int, default=5000,
                         help='the matrix with have size of mat_size * mat_size')
     parser.add_argument('--data_root_dir', default='./',
@@ -34,8 +38,11 @@ def main():
     args = parse_args()
     print(args)
 
+    #if args.task_idx == 0:
     root_path = args.data_root_dir + '/phase{}'.format(args.phase) + '/'
     print("root_path for data = ", root_path)
+    #else:
+    #   root_path = args.data_root_dir + '/phase{}'.format(args.phase) + '{}'.format(args.task_idx) + '/'
 
     msz = args.mat_size
     device = "gpu"
@@ -57,8 +64,10 @@ def main():
     wf.dataCopyD2H(msz)
     print(time.time() - start_time)
 
-    wf.writeNonMPI(args.write_size, root_path, args.instance_index)
-    wf.readNonMPI(args.read_size, root_path, args.instance_index)
+    wf.writeNonMPI(args.write_size, root_path, str(args.task_idx)+str(args.pipeline_idx))
+    wf.readNonMPI(args.read_size, root_path, str(args.task_idx)+str(args.pipeline_idx))
+    #wf.writeWithMPI(args.write_size, root_path)
+    #wf.readWithMPI(args.read_size, root_path)
 
     end_time = time.time()
     print("Total running time is {} seconds".format(end_time - start_time))

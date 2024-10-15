@@ -1,7 +1,9 @@
 #!/bin/bash
 
+export MINI_APP_DeepDriveMD_DIR="${PWD}/.."
+export RADICAL_REPORT=TRUE
 export RADICAL_LOG_LVL=DEBUG
-exp_dir=/gpfs/alpine2/scratch/dewiy/gen010/test_miniapp_ddmd_v1/
+exp_dir=/gpfs/alpine2/scratch/dewiy/gen010/soma_mini_app_out/
 
 if [ -d ${exp_dir} ]
 then
@@ -12,14 +14,14 @@ fi
 mkdir -p ${exp_dir}/model
 mkdir -p ${exp_dir}/data
 
-num_phase=3
+num_phase=1
 for((i=0; i<num_phase; i++))
 do
 	mkdir -p ${exp_dir}/data/phase${i}
 done
 
-python ../rct-scripts/ddmd-F-summit.py	\
-	--num_phases		3		\
+python ../rct-scripts/scale-soma-ddmd-F-summit.py	\
+	--num_phases		${num_phase}		\
 	--mat_size 		10000		\
 	--data_root_dir		"${exp_dir}/data"	\
 	--num_step		60000		\
@@ -37,5 +39,6 @@ python ../rct-scripts/ddmd-F-summit.py	\
 	--project_id		gen010		\
 	--queue			"debug"		\
 	--num_sim		12		\
-	--num_nodes		1		\
-	--io_json_file		"io_size-summit.json"
+	--num_nodes	        65  		\
+	--num_pipelines		64		\
+	--io_json_file		"io_size-summit-copy.json"
